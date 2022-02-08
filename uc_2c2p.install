@@ -1,0 +1,49 @@
+<?php
+// $Id$
+
+/**
+ * @file uc_2c2p.install
+ * Installation and upgrade hooks for the uc_2c2p module.
+ */
+
+
+/**
+ * Implementation of hook_schema().
+ */
+function uc_2c2p_schema() {
+  $schema = array();
+  $schema['uc_2c2p_transactions'] = array(
+    'fields' => array(
+      'id' => array(
+        'description' => 'Primary key',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'order_id' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Order Id',
+      ),
+      'transaction_ref' => array(
+        'description' => 'Transaction Reference',
+        'type' => 'text',
+      ),
+      'payment_status' => array(
+        'description' => 'Payment Status',
+        'type' => 'text',
+      ),
+      'transaction_data' => array(
+        'description' => 'Transaction Data',
+        'type' => 'text',
+      ),
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'order_id' => array('order_id'),
+    ),
+  );
+
+  return $schema;
+}

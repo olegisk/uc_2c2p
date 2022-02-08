@@ -1,0 +1,322 @@
+<?php
+
+/**
+ * Frontend URL: http://site.com/ubercart/?q=uc_2c2p/confirm
+ * Backend URL: http://site.com/ubercart/?q=uc_2c2p/callback
+ */
+
+/**
+ * Implementation of hook_menu()
+ */
+function uc_2c2p_menu() {
+  $items = array();
+
+  $items['uc_2c2p/order/%'] = array(
+    'title' => '2C2P Payment confirm',
+    'page callback' => 'uc_2c2p_order',
+    'page arguments' => array(2),
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_2c2p.pages.inc',
+  );
+
+  $items['uc_2c2p/confirm'] = array(
+    'title' => '2C2P Payment confirm',
+    'page callback' => 'uc_2c2p_confirm',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_2c2p.pages.inc',
+  );
+
+  $items['uc_2c2p/callback'] = array(
+    'title' => '2C2P Transaction Callback',
+    'page callback' => 'uc_2c2p_callback',
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_2c2p.pages.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implementation of hook_uc_payment_method()
+ */
+function uc_2c2p_uc_payment_method() {
+  $path = base_path() . drupal_get_path('module', 'uc_2c2p');
+
+  $methods[] = array(
+    'id' => '2c2p',
+    'name' => t('2C2P'),
+    'title' => t('Payment using 2C2P') . ' <img alt="2C2P" src="' . $path . '/images/2c2p.png" width="49" height="32" />',
+    'review' => t('2C2P'),
+    'desc' => t('Payment using 2C2P'),
+    'callback' => 'uc_payment_method_2c2p',
+    'weight' => 0,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+/**
+ * Callback for 2C2P Payment Method settings
+ * @param $op
+ * @param $order
+ * @param null $form
+ * @param null $form_state
+ * @return array|mixed|null|void
+ */
+function uc_payment_method_2c2p($op, &$order, $form = NULL, &$form_state = NULL) {
+  switch ($op) {
+    case 'settings':
+      // Form Settings
+      $form = array();
+      $form['uc_2c2p_merchant_id'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchant ID'),
+        '#description' => t('Copy the Merchant ID from your 2C2P account.'),
+        '#default_value' => variable_get('uc_2c2p_merchant_id', ''),
+      );
+      $form['uc_2c2p_merchant_authentication_key'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchant Authentication Key'),
+        '#description' => t('Copy the Merchant Authentication Key from your 2C2P account.'),
+        '#default_value' => variable_get('uc_2c2p_merchant_authentication_key', ''),
+      );
+      $form['uc_2c2p_testmode'] = array(
+        '#type' => 'select',
+        '#title' => t('Test Mode'),
+        '#description' => t('Enable Test Mode'),
+        '#options' => array(
+          'yes' => t('Yes'),
+          'no' => t('No')
+        ),
+        '#default_value' => variable_get('uc_2c2p_testmode', 'yes'),
+      );
+      return $form;
+    case 'order-submit':
+      // Set status
+      uc_order_update_status($order->order_id, uc_order_state_default('in_checkout'));
+
+      $redirectUrl = url('uc_2c2p/order/' . $order->order_id, array('absolute' => TRUE));
+      drupal_goto($redirectUrl);
+  }
+}
+
+/**
+ * Get Payment Args
+ * @param $order
+ * @return array
+ */
+function _uc_2c2p_get_args($order) {
+  $data = array(
+    'version' => '6.3',
+    'merchant_id' => variable_get('uc_2c2p_merchant_id', ''),
+    'payment_description' => variable_get('site_name', 'Ubercart'),
+    'order_id' => str_pad($order->order_id, 20, '0', STR_PAD_LEFT),
+    'invoice_no' => '',
+    'user_defined_1' => '',
+    'user_defined_2' => '',
+    'user_defined_3' => '',
+    'user_defined_4' => '',
+    'user_defined_5' => '',
+    'amount' => str_pad(number_format($order->order_total, 2, '', ''), 12, '0', STR_PAD_LEFT),
+    'currency' => _uc_2c2p_get_currency_iso_4217($order->currency),
+    'promotion' => '',
+    'customer_email' => $order->primary_email,
+    'pay_category_id' => '',
+    'result_url_1' => url('uc_2c2p/confirm', array('absolute' => TRUE)),
+    'result_url_2' => url('uc_2c2p/callback', array('absolute' => TRUE)),
+    'payment_option' => 'C',
+    'ipp_interest_type' => 'A',
+    'payment_expiry' => '',
+    'default_lang' => 'en', // th ja
+    'enable_store_card' => 'N',
+    'pan_masked' => '',
+    'stored_card_unique_id' => '',
+    'request_3ds' => 'Y',
+    'hash_value' => ''
+  );
+
+  // Make hash value
+  $required_fields = array(
+    'version', 'merchant_id', 'payment_description', 'order_id', 'invoice_no',
+    'currency', 'amount', 'customer_email', 'pay_category_id', 'promotion',
+    'user_defined_1', 'user_defined_2', 'user_defined_3', 'user_defined_4',
+    'user_defined_5', 'result_url_1', 'result_url_2', 'enable_store_card',
+    'stored_card_unique_id', 'pan_masked', 'request_3ds'
+  );
+
+  $tmp = '';
+  foreach ($required_fields as $field) {
+    $tmp .= $data[$field];
+  }
+
+  $secret_key = variable_get('uc_2c2p_merchant_authentication_key', '');
+  $data['hash_value'] = hash_hmac('sha1', $tmp, $secret_key, false);
+
+  return $data;
+}
+
+
+/**
+ * Get ISO4217 Currency Code
+ * @param $currency
+ * @return mixed
+ */
+function _uc_2c2p_get_currency_iso_4217($currency) {
+  $a = array();
+  $a['AFA'] = array('Afghan Afghani', '971');
+  $a['AWG'] = array('Aruban Florin', '533');
+  $a['AUD'] = array('Australian Dollars', '036');
+  $a['ARS'] = array('Argentine Pes', '&nbsp;&nbsp;&nbsp; 03');
+  $a['AZN'] = array('Azerbaijanian Manat', '944');
+  $a['BSD'] = array('Bahamian Dollar', '044');
+  $a['BDT'] = array('Bangladeshi Taka', '050');
+  $a['BBD'] = array('Barbados Dollar', '052');
+  $a['BYR'] = array('Belarussian Rouble', '974');
+  $a['BOB'] = array('Bolivian Boliviano', '068');
+  $a['BRL'] = array('Brazilian Real', '986');
+  $a['GBP'] = array('British Pounds Sterling', '826');
+  $a['BGN'] = array('Bulgarian Lev', '975');
+  $a['KHR'] = array('Cambodia Riel', '116');
+  $a['CAD'] = array('Canadian Dollars', '124');
+  $a['KYD'] = array('Cayman Islands Dollar', '136');
+  $a['CLP'] = array('Chilean Peso', '152');
+  $a['CNY'] = array('Chinese Renminbi Yuan', '156');
+  $a['COP'] = array('Colombian Peso', '170');
+  $a['CRC'] = array('Costa Rican Colon', '188');
+  $a['HRK'] = array('Croatia Kuna', '191');
+  $a['CPY'] = array('Cypriot Pounds', '196');
+  $a['CZK'] = array('Czech Koruna', '203');
+  $a['DKK'] = array('Danish Krone', '208');
+  $a['DOP'] = array('Dominican Republic Peso', '214');
+  $a['XCD'] = array('East Caribbean Dollar', '951');
+  $a['EGP'] = array('Egyptian Pound', '818');
+  $a['ERN'] = array('Eritrean Nakfa', '232');
+  $a['EEK'] = array('Estonia Kroon', '233');
+  $a['EUR'] = array('Euro', '978');
+  $a['GEL'] = array('Georgian Lari', '981');
+  $a['GHC'] = array('Ghana Cedi', '288');
+  $a['GIP'] = array('Gibraltar Pound', '292');
+  $a['GTQ'] = array('Guatemala Quetzal', '320');
+  $a['HNL'] = array('Honduras Lempira', '340');
+  $a['HKD'] = array('Hong Kong Dollars', '344');
+  $a['HUF'] = array('Hungary Forint', '348');
+  $a['ISK'] = array('Icelandic Krona', '352');
+  $a['INR'] = array('Indian Rupee', '356');
+  $a['IDR'] = array('Indonesia Rupiah', '360');
+  $a['ILS'] = array('Israel Shekel', '376');
+  $a['JMD'] = array('Jamaican Dollar', '388');
+  $a['JPY'] = array('Japanese yen', '392');
+  $a['KZT'] = array('Kazakhstan Tenge', '368');
+  $a['KES'] = array('Kenyan Shilling', '404');
+  $a['KWD'] = array('Kuwaiti Dinar', '414');
+  $a['LVL'] = array('Latvia Lat', '428');
+  $a['LBP'] = array('Lebanese Pound', '422');
+  $a['LTL'] = array('Lithuania Litas', '440');
+  $a['MOP'] = array('Macau Pataca', '446');
+  $a['MKD'] = array('Macedonian Denar', '807');
+  $a['MGA'] = array('Malagascy Ariary', '969');
+  $a['MYR'] = array('Malaysian Ringgit', '458');
+  $a['MTL'] = array('Maltese Lira', '470');
+  $a['BAM'] = array('Marka', '977');
+  $a['MUR'] = array('Mauritius Rupee', '480');
+  $a['MXN'] = array('Mexican Pesos', '484');
+  $a['MZM'] = array('Mozambique Metical', '508');
+  $a['NPR'] = array('Nepalese Rupee', '524');
+  $a['ANG'] = array('Netherlands Antilles Guilder', '532');
+  $a['TWD'] = array('New Taiwanese Dollars', '901');
+  $a['NZD'] = array('New Zealand Dollars', '554');
+  $a['NIO'] = array('Nicaragua Cordoba', '558');
+  $a['NGN'] = array('Nigeria Naira', '566');
+  $a['KPW'] = array('North Korean Won', '408');
+  $a['NOK'] = array('Norwegian Krone', '578');
+  $a['OMR'] = array('Omani Riyal', '512');
+  $a['PKR'] = array('Pakistani Rupee', '586');
+  $a['PYG'] = array('Paraguay Guarani', '600');
+  $a['PEN'] = array('Peru New Sol', '604');
+  $a['PHP'] = array('Philippine Pesos', '608');
+  $a['QAR'] = array('Qatari Riyal', '634');
+  $a['RON'] = array('Romanian New Leu', '946');
+  $a['RUB'] = array('Russian Federation Ruble', '643');
+  $a['SAR'] = array('Saudi Riyal', '682');
+  $a['CSD'] = array('Serbian Dinar', '891');
+  $a['SCR'] = array('Seychelles Rupee', '690');
+  $a['SGD'] = array('Singapore Dollars', '702');
+  $a['SKK'] = array('Slovak Koruna', '703');
+  $a['SIT'] = array('Slovenia Tolar', '705');
+  $a['ZAR'] = array('South African Rand', '710');
+  $a['KRW'] = array('South Korean Won', '410');
+  $a['LKR'] = array('Sri Lankan Rupee', '144');
+  $a['SRD'] = array('Surinam Dollar', '968');
+  $a['SEK'] = array('Swedish Krona', '752');
+  $a['CHF'] = array('Swiss Francs', '756');
+  $a['TZS'] = array('Tanzanian Shilling', '834');
+  $a['THB'] = array('Thai Baht', '764');
+  $a['TTD'] = array('Trinidad and Tobago Dollar', '780');
+  $a['TRY'] = array('Turkish New Lira', '949');
+  $a['AED'] = array('UAE Dirham', '784');
+  $a['USD'] = array('US Dollars', '840');
+  $a['UGX'] = array('Ugandian Shilling', '800');
+  $a['UAH'] = array('Ukraine Hryvna', '980');
+  $a['UYU'] = array('Uruguayan Peso', '858');
+  $a['UZS'] = array('Uzbekistani Som', '860');
+  $a['VEB'] = array('Venezuela Bolivar', '862');
+  $a['VND'] = array('Vietnam Dong', '704');
+  $a['AMK'] = array('Zambian Kwacha', '894');
+  $a['ZWD'] = array('Zimbabwe Dollar', '716');
+
+  return $a[$currency][1];
+}
+
+/**
+ * Save Transaction
+ * @param $order_id
+ * @param $transaction_ref
+ * @param $payment_status
+ * @param $data
+ * @return DatabaseStatementInterface|int
+ * @throws Exception
+ */
+function _uc_2c2p_transaction_add($order_id, $transaction_ref, $payment_status, $data) {
+  $id = db_insert('uc_2c2p_transactions')
+    ->fields(array(
+      'order_id' => $order_id,
+      'transaction_ref' => $transaction_ref,
+      'payment_status' => $payment_status,
+      'transaction_data' => serialize($data)
+    ))
+    ->execute();
+
+  return $id;
+}
+
+/**
+ * Load Transaction
+ * @param $transaction_ref
+ * @return mixed
+ */
+function _uc_2c2p_transaction_load($transaction_ref) {
+  $select = db_select('uc_2c2p_transactions')
+    ->fields('uc_2c2p_transactions')
+    ->condition('transaction_ref', $transaction_ref, '=');
+
+  return $select->execute()->fetch();
+}
+
+/**
+ * Load Transactions by Order Id
+ * @param $order_id
+ * @return mixed
+ */
+function _uc_2c2p_transactions_load_by_order_id($order_id) {
+  $select = db_select('uc_2c2p_transactions')
+    ->fields('uc_2c2p_transactions')
+    ->condition('order_id', $order_id, '=')
+    ->orderBy('id', 'DESC');
+
+  return $select->execute()->fetchAssoc();
+}
